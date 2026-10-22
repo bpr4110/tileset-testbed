@@ -34,16 +34,10 @@ def write_readme(
     gap: float,
     anchor: Anchor,
 ) -> None:
-    if layout.grouped:
-        original_description = (
-            "One node/mesh/material per color, with every shape of that color\n"
-            "  baked into the color's group mesh."
-        )
-    else:
-        original_description = (
-            "One single-shape mesh per color and one node per shape. This keeps\n"
-            "  the file compact for non-grid layouts, at the cost of many nodes."
-        )
+    original_description = (
+        "One node/mesh/material per color, with `EXT_mesh_gpu_instancing`\n"
+        "  placing every shape of that color."
+    )
 
     text = f"""# Generated tilesets
 

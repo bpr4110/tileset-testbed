@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from pathlib import Path
 
 import pytest
@@ -47,20 +48,48 @@ def _small_layout(name: str) -> Layout:
     raise AssertionError(name)
 
 
-def test_original_tileset_is_three_meshes(tmp_path: Path) -> None:
+def _accessor_values(
+    gltf: dict, binary: bytes, accessor_index: int, components: int
+) -> list[tuple[float, ...]]:
+    accessor = gltf["accessors"][accessor_index]
+    view = gltf["bufferViews"][accessor["bufferView"]]
+    start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    values = struct.unpack_from(
+        f"<{accessor['count'] * components}f", binary, start
+    )
+    return [
+        tuple(values[index : index + components])
+        for index in range(0, len(values), components)
+    ]
+
+
+def test_original_tileset_is_per_color_instanced(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    gltf, _ = read_glb_json(paths["original"].with_name("content.glb"))
+    gltf, binary = read_glb_json(paths["original"].with_name("content.glb"))
 
     assert len(gltf["meshes"]) == 3
     assert len(gltf["materials"]) == 3
     assert len(gltf["nodes"]) == 3
-    assert "extensionsUsed" not in gltf
+    assert gltf["extensionsUsed"] == ["EXT_mesh_gpu_instancing"]
 
-    assert gltf["nodes"][0]["translation"] == [0.0, 0.0, -1.5]
-    assert gltf["nodes"][1]["translation"] == [0.0, 0.0, 0.0]
-    assert gltf["nodes"][2]["translation"] == [0.0, 0.0, 1.5]
+    # One node per color, each instancing all shapes of that color.
+    for color, node in enumerate(gltf["nodes"]):
+        assert node["name"] == f"color_{color}"
+        assert node["mesh"] == color
+        assert "translation" not in node
+        attributes = node["extensions"]["EXT_mesh_gpu_instancing"]["attributes"]
+        assert set(attributes) == {"TRANSLATION", "ROTATION", "SCALE"}
+        assert gltf["accessors"][attributes["TRANSLATION"]]["count"] == 2
 
-    # All three meshes share the same geometry accessors.
+    # Color 0 has two cubes at x = -0.75 and 0.75, z = -1.5.
+    attributes = gltf["nodes"][0]["extensions"]["EXT_mesh_gpu_instancing"][
+        "attributes"
+    ]
+    translations = _accessor_values(gltf, binary, attributes["TRANSLATION"], 3)
+    assert translations[0] == pytest.approx((-0.75, 0.0, -1.5))
+    assert translations[1] == pytest.approx((0.75, 0.0, -1.5))
+
+    # All three meshes share the same single-shape geometry accessors.
     accessors = gltf["meshes"][0]["primitives"][0]["attributes"]
     for mesh in gltf["meshes"]:
         assert mesh["primitives"][0]["attributes"] == accessors
@@ -68,13 +97,13 @@ def test_original_tileset_is_three_meshes(tmp_path: Path) -> None:
     position = gltf["accessors"][accessors["POSITION"]]
     assert position["type"] == "VEC3"
     assert position["componentType"] == FLOAT
-    assert position["count"] == 2 * 24
-    assert position["min"] == [-1.25, 0.0, -0.5]
-    assert position["max"] == [1.25, 1.0, 0.5]
+    assert position["count"] == 24
+    assert position["min"] == [-0.5, 0.0, -0.5]
+    assert position["max"] == [0.5, 1.0, 0.5]
 
     indices = gltf["accessors"][gltf["meshes"][0]["primitives"][0]["indices"]]
     assert indices["componentType"] == UNSIGNED_SHORT
-    assert indices["count"] == 2 * 36
+    assert indices["count"] == 36
 
 
 def test_optimized_tileset_is_one_instanced_node(tmp_path: Path) -> None:
@@ -127,14 +156,14 @@ def test_both_tilesets_use_the_same_bounds(tmp_path: Path) -> None:
     optimized, _ = read_glb_json(paths["optimized"].with_name("content.glb"))
 
     original_position = original["accessors"][0]
-    # The optimized mesh is a single shape; its positions are instance-local.
     optimized_position = optimized["accessors"][0]
+
+    # Both use the same single-shape geometry; GPU instance transforms place
+    # the copies, so the mesh bounds stay instance-local.
+    assert original_position["min"] == [-0.5, 0.0, -0.5]
+    assert original_position["max"] == [0.5, 1.0, 0.5]
     assert optimized_position["min"] == [-0.5, 0.0, -0.5]
     assert optimized_position["max"] == [0.5, 1.0, 0.5]
-
-    # The original group mesh covers two cubes along X.
-    assert original_position["min"][0] == -1.25
-    assert original_position["max"][0] == 1.25
 
 
 def test_pack_indices_switches_to_uint32() -> None:
@@ -187,12 +216,16 @@ def test_all_layouts_generate(tmp_path: Path, layout_name: str) -> None:
     assert len(optimized["meshes"]) == 1
     assert len(optimized["nodes"]) == 1
 
-    if layout.grouped:
-        assert len(original["meshes"]) == layout.colors
-        assert len(original["nodes"]) == layout.colors
-    else:
-        assert len(original["meshes"]) == layout.colors
-        assert len(original["nodes"]) == layout.total
+    # The original is always one instanced node per color, regardless of layout.
+    assert original["extensionsUsed"] == ["EXT_mesh_gpu_instancing"]
+    assert len(original["meshes"]) == layout.colors
+    assert len(original["nodes"]) == layout.colors
+    for color, node in enumerate(original["nodes"]):
+        assert node["mesh"] == color
+        attributes = node["extensions"]["EXT_mesh_gpu_instancing"]["attributes"]
+        assert set(attributes) == {"TRANSLATION", "ROTATION", "SCALE"}
+        translation_accessor = original["accessors"][attributes["TRANSLATION"]]
+        assert translation_accessor["count"] == len(layout.positions_by_color[color])
 
     attributes = optimized["nodes"][0]["extensions"]["EXT_mesh_gpu_instancing"][
         "attributes"

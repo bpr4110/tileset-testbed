@@ -3,11 +3,12 @@
 Generate two minimal 3D Tiles 1.1 tilesets from the same layout and shape
 parameters:
 
-- **original** — the non-instanced baseline.
+- **original** — the per-color instanced baseline: one mesh and one
+  `EXT_mesh_gpu_instancing` node per color.
 - **optimized** — one shape mesh plus one
-  `EXT_mesh_gpu_instancing` node, with per-instance colors stored as
-  `EXT_instance_features` feature IDs and an `EXT_structural_metadata`
-  property table.
+  `EXT_mesh_gpu_instancing` node for the whole scene, with per-instance colors
+  stored as `EXT_instance_features` feature IDs and an
+  `EXT_structural_metadata` property table.
 
 The optimized tileset is meant for testing the Cesium for Unreal
 feature/metadata material pipeline.
@@ -124,13 +125,15 @@ tileset-testbed helix --shape cone --colors 4 --per-color 20 `
 
 ### Original tileset behavior
 
-- `grid2d` / `grid3d`: one group mesh per color, shared geometry, and one node
-  per color. This matches the previous baseline.
-- `lattice` / `sphere` / `halton` / `helix`: one single-shape mesh per color and
-  one node per shape. This keeps the GLB compact instead of duplicating a
-  per-color position set a hundred times.
+- Every layout shares one single-shape geometry, uses one material per color,
+  and writes one node per color.
+- Each node uses `EXT_mesh_gpu_instancing` with `TRANSLATION`, `ROTATION`, and
+  `SCALE` accessors covering that color's instances. `--colors 100` therefore
+  produces 100 nodes and 100 draw calls, independent of the number of shapes
+  per color; no geometry is baked per color any more.
 
-The optimized tileset always uses one shape mesh and one instanced node.
+The optimized tileset collapses all of that into one shape mesh and one
+instanced node, with the color moved into per-instance metadata.
 
 ## Shapes
 

@@ -5,10 +5,9 @@ shape's bottom (``Anchor.bottom``) or center (``Anchor.center``); the caller
 resolves ``Anchor.auto`` and shifts the whole scene so its lowest point is at
 ``Y = 0``.
 
-For grid layouts every color has the same relative pattern, so the original
-tileset can share one group mesh and translate it by the color's Z row.  For
-the other layouts the per-color positions differ, so the original tileset uses
-one single-shape mesh per color plus one node per shape.
+The original tileset writes one GPU-instanced node per color over these
+positions; the optimized tileset writes a single instanced node over all of
+them.  Grid layouts additionally share the same relative pattern per color.
 """
 
 from __future__ import annotations

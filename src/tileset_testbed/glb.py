@@ -184,47 +184,15 @@ def add_mesh_accessors(
 def build_original_glb(
     layout: Layout, palette: list[RGBA], mesh: Mesh
 ) -> tuple[dict[str, Any], bytes]:
-    """Build the non-instanced baseline tileset.
+    """Build the per-color instanced baseline tileset.
 
-    Grid layouts share one group mesh per color and place it with one node per
-    color.  Other layouts use one single-shape mesh per color and one node per
-    shape, which keeps the GLB small even for thousands of shapes per color.
+    The scene has one shared shape geometry, one material per color, and one
+    ``EXT_mesh_gpu_instancing`` node per color.  The node instances every shape
+    of that color, so ``--colors 100`` produces 100 nodes (and draw calls),
+    independent of how many shapes each color contains.
     """
     gltf = empty_gltf()
     builder = BinaryBuilder()
-
-    if layout.grouped:
-        relatives = layout.relative_by_color()
-        group_mesh = mesh.translated_xyz(relatives[0])
-        position_accessor, normal_accessor, index_accessor = add_mesh_accessors(
-            gltf, builder, group_mesh
-        )
-
-        for color_index, color in enumerate(palette):
-            gltf["materials"].append(make_material(f"color_{color_index}", color))
-            gltf["meshes"].append(
-                {
-                    "name": f"shape_group_{color_index}",
-                    "primitives": [
-                        make_primitive(
-                            position_accessor,
-                            normal_accessor,
-                            index_accessor,
-                            color_index,
-                        )
-                    ],
-                }
-            )
-            gltf["nodes"].append(
-                {
-                    "name": f"color_{color_index}",
-                    "mesh": color_index,
-                    "translation": list(layout.origins[color_index]),
-                }
-            )
-
-        gltf["scenes"][0]["nodes"] = list(range(layout.colors))
-        return gltf, builder.data
 
     position_accessor, normal_accessor, index_accessor = add_mesh_accessors(
         gltf, builder, mesh
@@ -246,19 +214,45 @@ def build_original_glb(
             }
         )
 
-    nodes: list[int] = []
     for color_index, positions in enumerate(layout.positions_by_color):
-        for instance_index, position in enumerate(positions):
-            nodes.append(len(gltf["nodes"]))
-            gltf["nodes"].append(
-                {
-                    "name": f"color_{color_index}_{instance_index}",
-                    "mesh": color_index,
-                    "translation": [position[0], position[1], position[2]],
-                }
-            )
+        translations = list(positions)
+        rotations = [(0.0, 0.0, 0.0, 1.0) for _ in translations]
+        scales = [(1.0, 1.0, 1.0) for _ in translations]
 
-    gltf["scenes"][0]["nodes"] = nodes
+        translation_view = add_buffer_view(
+            gltf, builder, pack_vec3(translations), ARRAY_BUFFER
+        )
+        rotation_view = add_buffer_view(
+            gltf, builder, pack_vec4(rotations), ARRAY_BUFFER
+        )
+        scale_view = add_buffer_view(gltf, builder, pack_vec3(scales), ARRAY_BUFFER)
+
+        translation_accessor = add_accessor(
+            gltf, translation_view, FLOAT, len(translations), "VEC3"
+        )
+        rotation_accessor = add_accessor(
+            gltf, rotation_view, FLOAT, len(rotations), "VEC4"
+        )
+        scale_accessor = add_accessor(gltf, scale_view, FLOAT, len(scales), "VEC3")
+
+        gltf["nodes"].append(
+            {
+                "name": f"color_{color_index}",
+                "mesh": color_index,
+                "extensions": {
+                    "EXT_mesh_gpu_instancing": {
+                        "attributes": {
+                            "TRANSLATION": translation_accessor,
+                            "ROTATION": rotation_accessor,
+                            "SCALE": scale_accessor,
+                        }
+                    }
+                },
+            }
+        )
+
+    gltf["scenes"][0]["nodes"] = list(range(layout.colors))
+    gltf["extensionsUsed"] = ["EXT_mesh_gpu_instancing"]
     return gltf, builder.data
 
 
