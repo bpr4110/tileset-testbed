@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tileset_testbed.colors import hue_to_linear_rgba
 from tileset_testbed.generate import generate
 from tileset_testbed.glb import (
     FLOAT,
@@ -148,6 +149,31 @@ def test_optimized_tileset_is_one_instanced_node(tmp_path: Path) -> None:
     assert color_accessor["type"] == "VEC4"
     assert color_accessor["componentType"] == FLOAT
     assert color_accessor["count"] == 3
+
+
+def test_optimized_colors_match_the_original_linear_colors(tmp_path: Path) -> None:
+    # Use 12 colors so the rows contain non-trivial intermediate channels; with
+    # RGB primaries an accidental sRGB encode would be invisible.
+    layout = grid2d(colors=12, columns=1, size=1.0, gap=0.5)
+    paths = generate(layout, Shape.cube, 1.0, 0.5, tmp_path / "out")
+    original, _ = read_glb_json(paths["original"].with_name("content.glb"))
+    optimized, binary = read_glb_json(paths["optimized"].with_name("content.glb"))
+
+    table = optimized["extensions"]["EXT_structural_metadata"]["propertyTables"][0]
+    accessor = table["properties"]["baseColor"]["values"]
+    table_colors = _accessor_values(optimized, binary, accessor, 4)
+
+    material_colors = [
+        tuple(material["pbrMetallicRoughness"]["baseColorFactor"])
+        for material in original["materials"]
+    ]
+    for table_color, material_color in zip(table_colors, material_colors):
+        assert table_color == pytest.approx(material_color, abs=1e-6)
+
+    # The shared table stores linear RGB, matching the original
+    # ``baseColorFactor`` values (not sRGB-encoded ones).
+    assert table_colors[1] == pytest.approx((1.0, 0.21404114, 0.0, 1.0))
+    assert table_colors[1] == pytest.approx(hue_to_linear_rgba(1 / 12))
 
 
 def test_both_tilesets_use_the_same_bounds(tmp_path: Path) -> None:

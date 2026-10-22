@@ -78,9 +78,13 @@ metadata-aware material is assigned:
    generated material layer to that Material's layer stack, and rename the
    layer to exactly `FeaturesMetadata`. Then create a Material Instance from
    that Material.
-7. In the generated layer, wire the `baseColor` output of
-   `Get Property Values From instanceColorTable` into Base Color. The plugin
-   binds the property texture as `PTABLE_instanceColorTable_baseColor`.
+7. In the generated layer, the `baseColor` float4 is delivered in **ABGR**
+   order for Float property tables: Cesium encodes float vec4 rows backwards
+   into a `PF_A32B32G32R32F` texture. Reverse the channels before Base Color:
+   `BreakOutFloat4Components` -> `MakeFloat4` with X = the **A** pin, Y = the
+   **B** pin, Z = the **G** pin, A = the **R** pin. The values themselves are
+   linear; do not insert `sRGBToLinear` or `LinearToSRGB` nodes. (This is a
+   Cesium for Unreal quirk, not a color-space problem in the GLB.)
 8. Assign the Material Instance to the tileset's **Material** slot and refresh
    the tileset (refresh again after changing the component description).
 
